@@ -1,9 +1,108 @@
-from supabase import create_client, Client
+import os
 import streamlit as st
+from supabase import create_client
+import pandas as pd
+from typing import List, Dict
+from dotenv import load_dotenv
 
-def get_supabase_client() -> Client:
-    url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY")
+# Load local .env as a fallback so you can put SUPABASE_URL and SUPABASE_KEY in a .env file (make sure it's gitignored)
+load_dotenv()
+
+
+def _get_creds():
+    # Prefer Streamlit secrets, fallback to env vars
+    url = None
+    key = None
+    if hasattr(st, "secrets") and st.secrets.get("SUPABASE_URL"):
+        url = st.secrets.get("SUPABASE_URL")
+        key = st.secrets.get("SUPABASE_KEY")
+    else:
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_KEY")
     if not url or not key:
-        raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY in Streamlit secrets.")
+        raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY in Streamlit secrets or env vars")
+    return url, key
+
+
+@st.cache_resource
+def get_supabase_client():
+    url, key = _get_creds()
+    # create_client returns an object that should be cached as a resource, not data
     return create_client(url, key)
+
+
+@st.cache_data(ttl=60)
+def get_sensors() -> List[Dict]:
+    """Return list of sensors from `sensors` table."""
+    supabase = get_supabase_client()
+    # order() uses 'desc' flag (supabase-py); use desc=False for ascending
+    res = supabase.table("sensors").select("*").order("id", desc=False).execute()
+    data = res.data if hasattr(res, "data") else res
+    return data or []
+
+
+@st.cache_data(ttl=60)
+def get_latest_readings_for_all() -> Dict[int, Dict]:
+    """Return a mapping sensor_id -> latest reading (or None).
+    This does one query and groups locally.
+    """
+    supabase = get_supabase_client()
+    # Fetch recent readings (limit to latest 2000) and pick latest per sensor
+    res = supabase.table("readings").select("*").order("timestamp", desc=True).limit(2000).execute()
+    rows = res.data or []
+    by_sensor = {}
+    for r in rows:
+        sid = int(r.get("sensor_id"))
+        if sid not in by_sensor:
+            by_sensor[sid] = r
+    return by_sensor
+
+
+@st.cache_data(ttl=60)
+def get_unresolved_alerts_counts() -> Dict[int, int]:
+    """Return mapping sensor_id -> unresolved alerts count."""
+    supabase = get_supabase_client()
+    res = supabase.table("alerts").select("sensor_id, resolved").eq("resolved", False).execute()
+    rows = res.data or []
+    counts = {}
+    for r in rows:
+        sid = int(r.get("sensor_id"))
+        counts[sid] = counts.get(sid, 0) + 1
+    return counts
+
+
+def get_sensor_details() -> List[Dict]:
+    """Return combined sensor info for display: sensor fields + latest reading + alert count."""
+    sensors = get_sensors()
+    latest = get_latest_readings_for_all()
+    alerts = get_unresolved_alerts_counts()
+
+    out = []
+    for s in sensors:
+        sid = int(s.get("id"))
+        lr = latest.get(sid)
+        a_count = alerts.get(sid, 0)
+        d = {
+            "id": sid,
+            "name": s.get("name"),
+            "lat": s.get("lat"),
+            "lon": s.get("lon"),
+            "type": s.get("type"),
+            "last_service": s.get("last_service"),
+            "latest_reading": lr,
+            "alert_count": a_count,
+        }
+        out.append(d)
+    return out
+
+
+def get_readings_for_sensor(sensor_id: int, limit: int = 500):
+    supabase = get_supabase_client()
+    res = supabase.table("readings").select("*").eq("sensor_id", sensor_id).order("timestamp", desc=True).limit(limit).execute()
+    rows = res.data or []
+    # Convert to DataFrame for easy plotting
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values("timestamp")
+    return df

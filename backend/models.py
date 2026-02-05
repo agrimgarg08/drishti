@@ -23,7 +23,7 @@ class Reading(Base):
     sensor_id = Column(Integer, ForeignKey("sensors.id"), nullable=False, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
     pH = Column(Float)
-    DO2 = Column("DO", Float)
+    DO2 = Column("DO2", Float)
     BOD = Column(Float)
     COD = Column(Float)
     turbidity = Column(Float)

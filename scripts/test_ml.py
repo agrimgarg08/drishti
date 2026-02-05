@@ -5,9 +5,9 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import pandas as pd
 import numpy as np
 from backend import ml
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-now = datetime.utcnow()
+now = datetime.now(timezone.utc)
 rows = []
 for i in range(48):
     rows.append({

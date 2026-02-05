@@ -50,6 +50,12 @@ print("issues ->", client.get("/issues").json())
 alerts = client.get("/alerts").json()
 if alerts:
     a = alerts[0]
-    print("resolve ->", client.post(f"/alerts/{a['id']}/resolve").json())
+    r = client.post(f"/alerts/{a['id']}/resolve")
+    # Endpoint may require authentication; print status and response for visibility
+    try:
+        body = r.json()
+    except Exception:
+        body = r.text
+    print("resolve ->", r.status_code, body)
 
 print("smoke tests done")

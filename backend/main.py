@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .db import init_db, get_db
 from . import models, ml
@@ -46,10 +46,6 @@ class PredictRequest(BaseModel):
     sensor_id: int
 
 
-class PredictRequest(BaseModel):
-    sensor_id: int
-
-
 class SimulateRequest(BaseModel):
     sensor_id: int
     reduction_pct: float
@@ -74,7 +70,7 @@ def ingest_reading(payload: IngestReading, db: Session = Depends(get_db)):
 
     reading = models.Reading(
         sensor_id=payload.sensor_id,
-        timestamp=payload.timestamp or datetime.utcnow(),
+        timestamp=payload.timestamp or datetime.now(timezone.utc),
         pH=payload.pH,
         DO2=payload.DO2,
         BOD=payload.BOD,
@@ -159,33 +155,14 @@ def list_sensors(db: Session = Depends(get_db)):
     } for s in rows]
 
 
-@app.post("/alerts/{alert_id}/resolve")
-def resolve_alert(alert_id: int, db: Session = Depends(get_db)):
-    """Mark an alert as resolved."""
-    alert = db.query(models.Alert).filter(models.Alert.id == alert_id).first()
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    alert.resolved = True
-    db.add(alert)
-    db.commit()
-    db.refresh(alert)
-    return {"id": alert.id, "resolved": alert.resolved}
+# Note: Unauthenticated resolve endpoint removed. Use the auth-protected resolver defined later to require authentication when resolving alerts.
 
 
 class IssueUpdate(BaseModel):
     status: str
 
 
-@app.patch("/issues/{issue_id}")
-def update_issue(issue_id: int, payload: IssueUpdate, db: Session = Depends(get_db)):
-    issue = db.query(models.Issue).filter(models.Issue.id == issue_id).first()
-    if not issue:
-        raise HTTPException(status_code=404, detail="Issue not found")
-    issue.status = payload.status
-    db.add(issue)
-    db.commit()
-    db.refresh(issue)
-    return {"id": issue.id, "status": issue.status}
+# Note: Unauthenticated issue update endpoint removed. Use the auth-protected `/issues/{issue_id}` PATCH endpoint defined later to require authenticated updates.
 
 
 @app.post("/predict-risk")

@@ -86,6 +86,21 @@ python -m scripts.test_ml
 
 These use FastAPI's TestClient and simple synthetic data to verify core endpoints and ML functions.
 
+## Dashboard (Streamlit)
+
+The Streamlit app shows an interactive sensor map and details:
+- Hover sensors on the map to view latest readings, `last_service`, and unresolved alert count.
+- Select a sensor to see metrics and time-series charts.
+- Use "Refresh sensor data" in the sidebar to clear the cache and refetch from Supabase.
+
+To run locally:
+
+```bash
+streamlit run frontend/app.py
+```
+
+When deployed to Streamlit Cloud, set `SUPABASE_URL` and `SUPABASE_KEY` in the app Secrets.
+
 ## Deploy (short)
 
 - Backend: Railway or Render — point `start` to `uvicorn backend.main:app --host 0.0.0.0 --port $PORT` and set `DATABASE_URL` as secret.

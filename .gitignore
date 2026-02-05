@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .env
 .env.*
+# Streamlit secrets (keep local, do not commit)
+.streamlit/
+

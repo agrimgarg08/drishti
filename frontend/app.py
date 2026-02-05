@@ -2,10 +2,18 @@
 Run: streamlit run frontend/app.py
 """
 import os
+import sys
+import pathlib
 import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import supabase
+
+# Ensure repo root is on sys.path so we can import modules from project root (like supabase_client)
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -88,50 +96,183 @@ def fetch_sensors():
 
 def dashboard():
     st.title("Dashboard")
-    sensors = fetch_sensors()
 
-    cols = st.columns([1, 2])
-    with cols[0]:
-        st.subheader("Sensors Map")
-        if sensors:
-            dfmap = pd.DataFrame(sensors)
-            st.map(dfmap[["lat", "lon"]])
+    # Controls
+    st.sidebar.markdown("### Map / Sensors")
+    show_only_with_alerts = st.sidebar.checkbox("Show sensors with active alerts only", value=False)
+    if st.sidebar.button("Refresh sensor data"):
+        # clear cached supabase queries
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        st.rerun() # DO NOT CHANGE!!!
+
+    st.subheader("Sensor Map")
+    try:
+        from supabase_client import get_sensor_details, get_readings_for_sensor
+
+        sensors = get_sensor_details()
+    except Exception as e:
+        st.error(f"Error fetching sensors from Supabase: {e}")
+        sensors = []
+
+    if not sensors:
+        st.info("No sensors detected. Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit secrets and the `sensors` table exists.")
+        return
+
+    # Build DataFrame for map
+    def _row_to_flat(r):
+        lr = r.get("latest_reading") or {}
+        return {
+            "id": r.get("id"),
+            "name": r.get("name"),
+            "lat": r.get("lat"),
+            "lon": r.get("lon"),
+            "last_service": r.get("last_service"),
+            "alert_count": r.get("alert_count", 0),
+            "pH": lr.get("pH"),
+            "DO2": lr.get("DO2"),
+            "BOD": lr.get("BOD"),
+            "COD": lr.get("COD"),
+            "turbidity": lr.get("turbidity"),
+            "ammonia": lr.get("ammonia"),
+            "temperature": lr.get("temperature"),
+            "conductivity": lr.get("conductivity"),
+            "latest_ts": lr.get("timestamp") if lr else None,
+        }
+
+    rows = [_row_to_flat(r) for r in sensors]
+    dfmap = pd.DataFrame(rows)
+
+    if show_only_with_alerts:
+        dfmap = dfmap[dfmap["alert_count"] > 0]
+
+    # Plot using Plotly mapbox (open-street-map so no token needed)
+    if not dfmap.empty:
+        center_lat = 28.6139
+        center_lon = 77.2090
+        fig = px.scatter_mapbox(
+            dfmap,
+            lat="lat",
+            lon="lon",
+            hover_name="name",
+            hover_data={"id": True, "lat": True, "lon": True, "alert_count": True},
+            zoom=10,
+            height=500,
+        )
+        # Use fixed, visible red markers (no heatmap / size mapping)
+        fig.update_traces(marker=dict(size=10, color="red", opacity=0.9), selector=dict(mode="markers"))
+        fig.update_layout(mapbox_style="open-street-map", mapbox_center={"lat": center_lat, "lon": center_lon})
+        # Render chart simply (no optional click-to-select to avoid instability)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No points to display on map.")
+
+    # Sensor detail panel
+    st.subheader("Sensor details & readings")
+    sensor_ids = sorted([int(x) for x in dfmap["id"].tolist()])
+    # Initialize selected sensor in session state so map clicks can set it
+    if "selected_sensor" not in st.session_state or st.session_state["selected_sensor"] not in sensor_ids:
+        st.session_state["selected_sensor"] = sensor_ids[0] if sensor_ids else None
+    sid = st.selectbox("Select sensor", options=sensor_ids, key="selected_sensor")
+
+    df = get_readings_for_sensor(sid)
+    if df.empty:
+        st.info("No readings yet for selected sensor.")
+    else:
+        # Normalize common parameter column names to canonical forms (case-insensitive) and coerce to numeric
+        canonical = {
+            "ph": "pH",
+            "do2": "DO2",
+            "bod": "BOD",
+            "cod": "COD",
+            "turbidity": "turbidity",
+            "ammonia": "ammonia",
+            "temperature": "temperature",
+            "conductivity": "conductivity",
+        }
+        rename = {}
+        for c in df.columns:
+            lc = str(c).lower()
+            if lc in canonical and c != canonical[lc]:
+                rename[c] = canonical[lc]
+        if rename:
+            df = df.rename(columns=rename)
+
+        # Coerce expected numeric parameters to numbers to ensure plotting and metrics work
+        for c in ["pH", "DO2", "BOD", "COD", "turbidity", "ammonia", "temperature", "conductivity"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        # Use the most recent non-null value for each parameter so metrics show available readings
+        
+        cols1 = st.columns(4)
+        cols2 = st.columns(4)
+        
+        def _last_non_null(df, col):
+            try:
+                if col in df.columns:
+                    s = df[col].dropna()
+                    return s.iloc[-1] if not s.empty else None
+            except Exception:
+                return None
+            return None
+
+        ph_val = _last_non_null(df, "pH")
+        do2_val = _last_non_null(df, "DO2")
+        bod_val = _last_non_null(df, "BOD")
+        cod_val = _last_non_null(df, "COD")
+        temp_val = _last_non_null(df, "temperature")
+        turb_val = _last_non_null(df, "turbidity")
+        ammo_val = _last_non_null(df, "ammonia")
+        cond_val = _last_non_null(df, "conductivity")
+
+        cols1[0].metric("pH", ph_val if pd.notna(ph_val) else "—")
+        cols1[1].metric("DO₂ (mg/L)", do2_val if pd.notna(do2_val) else "—")
+        cols1[2].metric("BOD (mg/L)", bod_val if pd.notna(bod_val) else "—")
+        cols1[3].metric("COD (mg/L)", cod_val if pd.notna(cod_val) else "—")
+
+        cols2[0].metric("Temp (°C)", temp_val if pd.notna(temp_val) else "—")
+        cols2[1].metric("Turbidity (FNU)", turb_val if pd.notna(turb_val) else "—")
+        cols2[2].metric("Ammonia (mg/L)", ammo_val if pd.notna(ammo_val) else "—")
+        cols2[3].metric("Conductivity (μS/cm)", cond_val if pd.notna(cond_val) else "—")
+
+        # Time series chart
+        tdf = df.copy()
+        tdf = tdf.sort_values("timestamp")
+        # Safely plot parameters by reshaping to long format to avoid Plotly length errors
+        params = ["pH", "DO2", "BOD", "COD", "turbidity", "ammonia", "temperature", "conductivity"]
+        available = [p for p in params if p in tdf.columns]
+        if not available:
+            st.info("No parameter columns available for plotting.")
         else:
-            st.info("No sensors detected. Run the server and seed sensors with scripts/init_db.py and start data generator.")
+            dfm = tdf.melt(id_vars="timestamp", value_vars=available, var_name="parameter", value_name="value")
+            # Replace internal parameter code with display-friendly labels for plotting (DO₂ displayed but internal column remains DO2)
+            dfm["parameter"] = dfm["parameter"].replace({
+                "DO2": "DO₂",
+                "turbidity": "Turbidity",
+                "ammonia": "Ammonia",
+                "temperature": "Temperature",
+                "conductivity": "Conductivity",
+            })
+            dfm = dfm.dropna(subset=["value"])  # drop missing values
+            try:
+                fig = px.line(dfm, x="timestamp", y="value", color="parameter", title=f"Sensor {sid} readings", labels={"parameter": "Parameter"})
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Failed to render chart: {e}")
+                st.write(dfm.head())
 
-    with cols[1]:
-        st.subheader("Live Readings (latest)")
-        if sensors:
-            sid = st.selectbox("Choose sensor", [s["id"] for s in sensors])
-            resp = requests.get(f"{API_BASE}/readings/{sid}?limit=200")
-            if resp.status_code == 200:
-                rows = resp.json()
-                df = pd.DataFrame(rows)
-                if not df.empty:
-                    df["timestamp"] = pd.to_datetime(df["timestamp"])
-                    st.write("Latest:")
-                    st.dataframe(df.sort_values("timestamp").tail(5))
-                    fig = px.line(df.sort_values("timestamp"), x="timestamp", y=["pH", "BOD", "COD", "turbidity"], title=f"Sensor {sid} readings")
-                    st.plotly_chart(fig, use_container_width=True)
+        st.write("Latest 10 readings")
+        st.dataframe(tdf.tail(10))
 
-                    if st.button("Predict risk for next 24h"):
-                        resp2 = requests.post(f"{API_BASE}/predict-risk", json={"sensor_id": sid})
-                        if resp2.status_code == 200:
-                            res = resp2.json()
-                            next_24 = res.get("next_24h", [])
-                            if next_24:
-                                dfp = pd.DataFrame(next_24)
-                                dfp["ts"] = pd.to_datetime(dfp["ts"])
-                                fig2 = px.line(dfp, x="ts", y="risk", title=f"Predicted risk (next 24h) - Sensor {sid}")
-                                st.plotly_chart(fig2, use_container_width=True)
-                        else:
-                            st.error("Failed to fetch prediction")
-                else:
-                    st.info("No readings yet for selected sensor.")
-            else:
-                st.error("Failed to fetch readings")
+        # Link to alerts for this sensor
+        a_count = int(dfmap.loc[dfmap["id"] == sid, "alert_count"].iloc[0]) if not dfmap.loc[dfmap["id"] == sid].empty else 0
+        if a_count:
+            st.warning(f"There are {a_count} unresolved alert(s) for this sensor. See the Alerts page.")
         else:
-            st.info("No sensors available")
+            st.success("No active alerts for this sensor")
 
 
 def alerts_page():

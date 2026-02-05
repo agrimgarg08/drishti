@@ -83,8 +83,8 @@ def predict_risk(df: pd.DataFrame):
     last_idx = df_hour["t_idx"].iloc[-1]
     next_24 = []
     for i in range(1, 25):
-        t = np.array([[last_idx + i]])
-        pred = model.predict(t)[0, 0]
+        t_df = pd.DataFrame({"t_idx": [last_idx + i]})
+        pred = model.predict(t_df)[0, 0]
         next_24.append({"ts": (df_hour["timestamp"].iloc[-1] + timedelta(hours=i)).isoformat(), "risk": float(max(pred, 0))})
 
     baseline = float(df["score"].mean())
