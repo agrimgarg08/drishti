@@ -101,3 +101,21 @@ These use FastAPI's TestClient and simple synthetic data to verify core endpoint
    - SUPABASE_URL
    - SUPABASE_KEY
 4. Deploy. Use the sidebar to enter a table name and view/insert rows.
+
+---
+
+# Quick local setup
+
+## Unix
+
+1. ./setup_venv.sh
+2. source .venv/bin/activate
+3. streamlit run streamlit_app.py
+
+## Windows
+
+1. setup_venv.bat
+2. .venv\Scripts\activate
+3. streamlit run streamlit_app.py
+
+Before deploying to Streamlit Cloud, add SUPABASE_URL and SUPABASE_KEY in the app Secrets.
