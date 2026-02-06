@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 from datetime import timedelta
 
-NUMERIC_COLS = ["pH", "DO2", "BOD", "COD", "turbidity", "ammonia", "temperature", "conductivity"]
+NUMERIC_COLS = ["ph", "do2", "bod", "cod", "turbidity", "ammonia", "temperature", "conductivity"]
 
 
 def anomaly_detection(df: pd.DataFrame, contamination: float = 0.05):
@@ -39,12 +39,12 @@ def anomaly_detection(df: pd.DataFrame, contamination: float = 0.05):
 
 def _pollution_index(row):
     # Simple normalized indicator: higher is worse
-    # pH is neutral around 7; penalize if outside 6.5-8
+    # ph is neutral around 7; penalize if outside 6.5-8
     score = 0.0
-    score += max(0, abs(row.get("pH", 7) - 7)) * 1.0
+    score += max(0, abs(row.get("ph", 7) - 7)) * 1.0
     score += max(0, (8 - row.get("DO2", 8))) * 1.5  # low DO2 is bad
-    score += row.get("BOD", 0) * 0.2
-    score += row.get("COD", 0) * 0.1
+    score += row.get("bod", 0) * 0.2
+    score += row.get("cod", 0) * 0.1
     score += row.get("turbidity", 0) * 0.05
     score += row.get("ammonia", 0) * 0.2
     score += row.get("conductivity", 0) * 0.01
@@ -64,7 +64,18 @@ def predict_risk(df: pd.DataFrame):
     df["score"] = df.apply(_pollution_index, axis=1)
 
     # Aggregate hourly
-    df_hour = df.set_index("timestamp").resample("1h").mean().interpolate()
+    numeric_cols = [
+    "ph", "do2", "bod", "cod",
+    "turbidity", "ammonia",
+    "temperature", "conductivity",
+    "score"
+    ]
+    df_hour = (
+    df.set_index("timestamp")[numeric_cols]
+    .resample("1h")
+    .mean()
+    .interpolate()
+    )
     df_hour = df_hour.reset_index()
     if df_hour.shape[0] < 2:
         # Not enough data, repeat last value
@@ -101,8 +112,8 @@ def simulate_policy(df: pd.DataFrame, reduction_pct: float):
     if df.empty:
         return {"projected_baseline": 0, "projected_next_24h": []}
 
-    # Reduce pollutant columns (BOD, COD, turbidity, ammonia, conductivity)
-    for col in ["BOD", "COD", "turbidity", "ammonia", "conductivity"]:
+    # Reduce pollutant columns (bod, cod, turbidity, ammonia, conductivity)
+    for col in ["bod", "cod", "turbidity", "ammonia", "conductivity"]:
         if col in df.columns:
             df[col] = df[col] * factor
 
