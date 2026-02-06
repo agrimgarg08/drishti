@@ -461,7 +461,7 @@ def dashboard():
             latest10 = tdf.sort_values("timestamp", ascending=False).head(10)
         else:
             latest10 = tdf.tail(10)
-        st.dataframe(latest10)
+        st.dataframe(latest10, hide_index=True)
 
         # Link to alerts for this sensor
         a_count = int(dfmap.loc[dfmap["id"] == sid, "alert_count"].iloc[0]) if not dfmap.loc[dfmap["id"] == sid].empty else 0
@@ -498,7 +498,7 @@ def alerts_page():
         preferred_cols = ["id", "sensor_id", "severity", "message", "timestamp", "resolved"]
         cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
         df = df[cols]
-        st.dataframe(df, width="stretch")
+        st.dataframe(df, width="stretch", hide_index=True)
 
         # Optional resolve action for unresolved alerts
         unresolved_ids = [a["id"] for a in rows if not a.get("resolved")]
@@ -745,7 +745,7 @@ def issues_page():
         preferred_cols = ["id", "title", "description", "status", "created_by", "created_at"]
         cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
         df = df[cols]
-        st.dataframe(df, width="stretch")
+        st.dataframe(df, width="stretch", hide_index=True)
         # allow closing an issue
         open_ids = [i["id"] for i in rows if i.get("status") != "closed"]
         if open_ids:
