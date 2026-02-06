@@ -5,6 +5,7 @@ import os
 import sys
 import pathlib
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import pandas as pd
 import plotly.express as px
@@ -91,6 +92,24 @@ def _clear_query_params():
 st.sidebar.markdown("### Authentication")
 if supabase:
     st.sidebar.write("Supabase auth available")
+    # If OAuth returns tokens in URL hash (implicit flow), move them to query params.
+    components.html(
+        """
+        <script>
+        (function() {
+          const hash = window.location.hash;
+          if (hash && hash.includes("access_token")) {
+            const params = new URLSearchParams(hash.substring(1));
+            const url = new URL(window.location.href);
+            params.forEach((v, k) => url.searchParams.set(k, v));
+            url.hash = "";
+            window.location.replace(url.toString());
+          }
+        })();
+        </script>
+        """,
+        height=0,
+    )
     # Restore session if we have tokens from a prior login in this browser session
     if st.session_state.get("access_token") and st.session_state.get("refresh_token"):
         try:
@@ -108,8 +127,31 @@ if supabase:
     try:
         params = _get_query_params()
         oauth_code = params.get("code")
+        access_token = params.get("access_token")
+        refresh_token = params.get("refresh_token")
         if isinstance(oauth_code, list):
             oauth_code = oauth_code[0] if oauth_code else None
+        if isinstance(access_token, list):
+            access_token = access_token[0] if access_token else None
+        if isinstance(refresh_token, list):
+            refresh_token = refresh_token[0] if refresh_token else None
+
+        # If we already have tokens in the URL (implicit flow), use them directly.
+        if access_token and refresh_token and not st.session_state["user"]:
+            try:
+                supabase.auth.set_session(access_token, refresh_token)
+                user_res = supabase.auth.get_user()
+                user = _get_attr(user_res, "user") or _get_attr(user_res, "data")
+                if user:
+                    st.session_state["user"] = user
+                    st.session_state["access_token"] = access_token
+                    st.session_state["refresh_token"] = refresh_token
+                    _clear_query_params()
+                    st.sidebar.success("Signed in")
+                    st.rerun()
+            except Exception:
+                pass
+
         if oauth_code and not st.session_state["user"]:
             res = supabase.auth.exchange_code_for_session(oauth_code)
             session = _get_attr(res, "session")
