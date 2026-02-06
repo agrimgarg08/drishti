@@ -47,4 +47,39 @@ CREATE TABLE IF NOT EXISTS issues (
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now()
 );
 
+-- Row Level Security (RLS) policies for Supabase
+-- Enable RLS
+ALTER TABLE public.issues ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
+
+-- Issues policies
+CREATE POLICY "issues_read_public"
+ON public.issues
+FOR SELECT
+USING (true);
+
+CREATE POLICY "issues_insert_auth"
+ON public.issues
+FOR INSERT
+TO authenticated
+WITH CHECK (created_by = (auth.jwt() ->> 'email'));
+
+CREATE POLICY "issues_update_auth"
+ON public.issues
+FOR UPDATE
+TO authenticated
+USING (true);
+
+-- Alerts policies
+CREATE POLICY "alerts_read_public"
+ON public.alerts
+FOR SELECT
+USING (true);
+
+CREATE POLICY "alerts_update_auth"
+ON public.alerts
+FOR UPDATE
+TO authenticated
+USING (true);
+
 -- Useful views or helpers could go here later

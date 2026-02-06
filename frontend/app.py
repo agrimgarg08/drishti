@@ -53,13 +53,33 @@ if "user" not in st.session_state:
 st.sidebar.markdown("### Authentication")
 if supabase:
     st.sidebar.write("Supabase auth available")
+    # Handle OAuth redirect (Supabase sends ?code=... on return)
+    try:
+        params = st.query_params
+        oauth_code = params.get("code")
+        if isinstance(oauth_code, list):
+            oauth_code = oauth_code[0] if oauth_code else None
+        if oauth_code and not st.session_state["user"]:
+            res = supabase.auth.exchange_code_for_session(oauth_code)
+            session = res.get("session") if isinstance(res, dict) else None
+            user = res.get("user") if isinstance(res, dict) else None
+            if session and user:
+                st.session_state["user"] = user
+                st.session_state["access_token"] = session.get("access_token")
+                # Clear query params to avoid re-processing
+                st.query_params.clear()
+                st.sidebar.success("Signed in")
+    except Exception:
+        pass
+
     if not st.session_state["user"]:
+        # Email/password login
         email = st.sidebar.text_input("Email", key="email")
         pw = st.sidebar.text_input("Password", type="password", key="pw")
-        if st.sidebar.button("Sign in"):
+        cols = st.sidebar.columns(2)
+        if cols[0].button("Sign in"):
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": pw})
-                # res may contain 'session' and 'user'
                 session = res.get("session") if isinstance(res, dict) else None
                 user = res.get("user") if isinstance(res, dict) else None
                 if session and user:
@@ -70,12 +90,30 @@ if supabase:
                     st.sidebar.error("Sign in failed")
             except Exception:
                 st.sidebar.error("Auth error")
-        if st.sidebar.button("Sign up"):
+        if cols[1].button("Sign up"):
             try:
                 supabase.auth.sign_up({"email": email, "password": pw})
                 st.sidebar.info("Signup requested. Check email for confirmation.")
             except Exception:
                 st.sidebar.error("Signup failed")
+
+        st.sidebar.markdown("— or —")
+        if st.sidebar.button("Sign in with GitHub"):
+            try:
+                redirect_to = os.getenv("SUPABASE_REDIRECT_URL") or "http://localhost:8501"
+                res = supabase.auth.sign_in_with_oauth(
+                    {"provider": "github", "options": {"redirect_to": redirect_to}}
+                )
+                if isinstance(res, dict):
+                    url = res.get("url")
+                else:
+                    url = getattr(res, "url", None)
+                if url:
+                    st.sidebar.link_button("Continue to GitHub", url)
+                else:
+                    st.sidebar.error("Failed to start GitHub login")
+            except Exception:
+                st.sidebar.error("Auth error")
     else:
         st.sidebar.write(f"Signed in: {st.session_state['user'].get('email')}")
         if st.sidebar.button("Sign out"):
@@ -319,6 +357,12 @@ def dashboard():
 def alerts_page():
     st.title("Alerts")
     unresolved = st.checkbox("Show unresolved only", value=True)
+    if st.sidebar.button("Refresh alerts"):
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        st.rerun()
     # Prefer Supabase directly (no backend needed)
     rows = None
     try:
@@ -342,19 +386,33 @@ def alerts_page():
         unresolved_ids = [a["id"] for a in rows if not a.get("resolved")]
         if unresolved_ids:
             st.markdown("### Resolve Alert")
-            alert_id = st.selectbox("Select alert to resolve", unresolved_ids)
-            if st.button("Resolve selected alert"):
+            alert_id = st.number_input(
+                "Enter alert ID",
+                min_value=int(min(unresolved_ids)),
+                max_value=int(max(unresolved_ids)),
+                value=int(unresolved_ids[0]),
+                step=1,
+            )
+            if alert_id not in unresolved_ids:
+                st.error(f"Invalid alert ID: {int(alert_id)}")
+                return
+            if st.button("Resolve alert"):
                 token = st.session_state.get("access_token")
                 if not token:
                     st.error("Sign in with Supabase to resolve alerts")
                 else:
-                    headers = {"Authorization": f"Bearer {token}"}
-                    r = requests.post(f"{API_BASE}/alerts/{alert_id}/resolve", headers=headers)
-                    if r.status_code == 200:
+                    try:
+                        from supabase_client import resolve_alert
+
+                        resolve_alert(int(alert_id), access_token=token)
+                        try:
+                            st.cache_data.clear()
+                        except Exception:
+                            pass
                         st.success("Resolved")
                         st.rerun() # DO NOT CHANGE!!!
-                    else:
-                        st.error("Failed to resolve")
+                    except Exception as e:
+                        st.error(f"Failed to resolve: {e}")
     else:
         st.info("No alerts")
 
@@ -384,39 +442,81 @@ def issues_page():
     with st.form("create_issue"):
         t = st.text_input("Title")
         d = st.text_area("Description")
-        user = st.text_input("Reported by")
         submitted = st.form_submit_button("Create")
         if submitted:
-            resp = requests.post(f"{API_BASE}/issues", json={"title": t, "description": d, "created_by": user})
-            if resp.status_code == 200:
-                st.success("Issue created")
+            token = st.session_state.get("access_token")
+            user = st.session_state.get("user")
+            if not token or not user:
+                st.error("Sign in with Supabase to submit issues")
             else:
-                st.error("Failed to create issue")
+                email = user.get("email") or user.get("user_metadata", {}).get("email") or "unknown"
+                try:
+                    from supabase_client import create_issue
+
+                    create_issue(t, d, created_by=email, access_token=token)
+                    try:
+                        st.cache_data.clear()
+                    except Exception:
+                        pass
+                    st.success("Issue created")
+                except Exception as e:
+                    st.error(f"Failed to create issue: {e}")
 
     if st.button("Refresh issues"):
-        resp = requests.get(f"{API_BASE}/issues")
-        if resp.status_code == 200:
-            rows = resp.json()
-            if rows:
-                df = pd.DataFrame(rows)
-                st.dataframe(df)
-                # allow closing an issue
-                for i in rows:
-                    if i.get("status") != "closed":
-                        if st.button(f"Close issue {i['id']}", key=f"close-{i['id']}"):
-                            token = st.session_state.get("access_token")
-                            if not token:
-                                st.error("Sign in with Supabase to close issues")
-                            else:
-                                headers = {"Authorization": f"Bearer {token}"}
-                                r = requests.patch(f"{API_BASE}/issues/{i['id']}", json={"status": "closed"}, headers=headers)
-                                if r.status_code == 200:
-                                    st.success("Issue closed")
-                                    st.experimental_rerun()
-                                else:
-                                    st.error("Failed to close")
-            else:
-                st.info("No issues yet")
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        st.rerun()
+
+    try:
+        from supabase_client import get_issues
+
+        rows = get_issues()
+    except Exception as e:
+        st.error(f"Supabase not reachable: {e}")
+        st.info("Check Streamlit secrets for SUPABASE_URL and SUPABASE_KEY.")
+        return
+
+    if rows:
+        df = pd.DataFrame(rows)
+        preferred_cols = ["id", "title", "description", "status", "created_by", "created_at"]
+        cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
+        df = df[cols]
+        st.dataframe(df, use_container_width=True)
+        # allow closing an issue
+        open_ids = [i["id"] for i in rows if i.get("status") != "closed"]
+        if open_ids:
+            st.markdown("### Close Issue")
+            issue_id = st.number_input(
+                "Enter issue ID",
+                min_value=int(min(open_ids)),
+                max_value=int(max(open_ids)),
+                value=int(open_ids[0]),
+                step=1,
+            )
+            if issue_id not in open_ids:
+                st.error(f"Invalid issue ID: {int(issue_id)}")
+                return
+            if st.button("Close issue"):
+                token = st.session_state.get("access_token")
+                if not token:
+                    st.error("Sign in with Supabase to close issues")
+                else:
+                    try:
+                        from supabase_client import update_issue_status
+
+                        update_issue_status(int(issue_id), "closed", access_token=token)
+                        try:
+                            st.cache_data.clear()
+                        except Exception:
+                            pass
+                        st.success("Issue closed")
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Failed to close: {e}")
+    else:
+        st.info("No issues yet")
 
 
 if page == "Dashboard":
