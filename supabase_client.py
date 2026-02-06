@@ -71,6 +71,18 @@ def get_unresolved_alerts_counts() -> Dict[int, int]:
     return counts
 
 
+@st.cache_data(ttl=60)
+def get_alerts(unresolved_only: bool = True) -> List[Dict]:
+    """Return alerts from `alerts` table, optionally filtering to unresolved only."""
+    supabase = get_supabase_client()
+    q = supabase.table("alerts").select("*")
+    if unresolved_only:
+        q = q.eq("resolved", False)
+    res = q.order("timestamp", desc=True).execute()
+    data = res.data if hasattr(res, "data") else res
+    return data or []
+
+
 def get_sensor_details() -> List[Dict]:
     """Return combined sensor info for display: sensor fields + latest reading + alert count."""
     sensors = get_sensors()

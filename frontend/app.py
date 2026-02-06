@@ -1,4 +1,4 @@
-"""Streamlit frontend for the Yamuna Monitor prototype.
+"""Streamlit frontend for the DRISHTI.
 Run: streamlit run frontend/app.py
 """
 import os
@@ -19,10 +19,23 @@ API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-st.set_page_config(page_title="Yamuna Monitor", layout="wide")
+st.set_page_config(page_title="Drishti", layout="wide")
 
-st.sidebar.title("Yamuna Monitor")
-page = st.sidebar.selectbox("Page", ["Dashboard", "Alerts", "Simulation", "Issues"])
+st.markdown(
+    """
+    <style>
+    /* Target the sidebar title */
+    section[data-testid="stSidebar"] h1 {
+        font-size: 64px !important;  /* Increase font size */
+        font-weight: bold;           /* Optional: make it bold */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.sidebar.title("DRISHTI", text_alignment="center")
+page = st.sidebar.selectbox("Select Page", ["Dashboard", "Alerts", "Simulation", "Issues"], label_visibility="collapsed")
 
 # Optional Supabase auth (if configured). Falls back to demo login.
 supabase = None
@@ -124,6 +137,8 @@ def dashboard():
     # Build DataFrame for map
     def _row_to_flat(r):
         lr = r.get("latest_reading") or {}
+        alert_count = r.get("alert_count", 0)
+        alert_color = 'green' if alert_count == 0 else 'red'
         return {
             "id": r.get("id"),
             "name": r.get("name"),
@@ -140,6 +155,7 @@ def dashboard():
             "temperature": lr.get("temperature"),
             "conductivity": lr.get("conductivity"),
             "latest_ts": lr.get("timestamp") if lr else None,
+            "alert_color": alert_color,
         }
 
     rows = [_row_to_flat(r) for r in sensors]
@@ -161,8 +177,11 @@ def dashboard():
             zoom=10,
             height=500,
         )
-        # Use fixed, visible red markers (no heatmap / size mapping)
-        fig.update_traces(marker=dict(size=10, color="red", opacity=0.9), selector=dict(mode="markers"))
+        # Color markers by alert status: green (no alerts), red (alerts)
+        fig.update_traces(
+            marker=dict(size=10, color=dfmap["alert_color"], opacity=0.9),
+            selector=dict(mode="markers"),
+        )
         fig.update_layout(mapbox_style="open-street-map", mapbox_center={"lat": center_lat, "lon": center_lon})
         # Render chart simply (no optional click-to-select to avoid instability)
         st.plotly_chart(fig, use_container_width=True)
@@ -170,15 +189,31 @@ def dashboard():
         st.info("No points to display on map.")
 
     # Sensor detail panel
-    st.subheader("Sensor details & readings")
+    st.subheader("Sensor Details & Readings")
     sensor_ids = sorted([int(x) for x in dfmap["id"].tolist()])
-    # Initialize selected sensor in session state so map clicks can set it
-    if "selected_sensor" not in st.session_state or st.session_state["selected_sensor"] not in sensor_ids:
-        st.session_state["selected_sensor"] = sensor_ids[0] if sensor_ids else None
-    sid = st.selectbox("Select sensor", options=sensor_ids, key="selected_sensor")
+    
+    # If filtering by alerts and no sensors match, show info and return
+    if show_only_with_alerts and not sensor_ids:
+        st.info("No sensors with active alerts found.")
+        return
+    
+    # Number input for selecting sensor ID
+    sid = st.number_input("Enter drain number (ID)", min_value=1, max_value=10000, value=sensor_ids[0] if sensor_ids else 1, step=1)
+    
+    # Validate that the entered ID exists
+    if sid not in sensor_ids:
+        st.error(f"Invalid drain ID: {int(sid)}")
+        return
 
-    df = get_readings_for_sensor(sid)
-    if df.empty:
+    df = None
+    try:
+        df = get_readings_for_sensor(sid)
+    except Exception as e:
+        st.error(f"Error fetching readings for sensor {sid}: {e}")
+        st.info("This may be a temporary issue. Try refreshing the sensor data or selecting a different sensor.")
+        df = None
+    
+    if df is None or df.empty:
         st.info("No readings yet for selected sensor.")
     else:
         # Normalize common parameter column names to canonical forms (case-insensitive) and coerce to numeric
@@ -228,15 +263,15 @@ def dashboard():
         ammo_val = _last_non_null(df, "ammonia")
         cond_val = _last_non_null(df, "conductivity")
 
-        cols1[0].metric("pH", ph_val if pd.notna(ph_val) else "—")
-        cols1[1].metric("DO₂ (mg/L)", do2_val if pd.notna(do2_val) else "—")
-        cols1[2].metric("BOD (mg/L)", bod_val if pd.notna(bod_val) else "—")
-        cols1[3].metric("COD (mg/L)", cod_val if pd.notna(cod_val) else "—")
+        cols1[0].metric("pH", round(ph_val, 2) if pd.notna(ph_val) else "—")
+        cols1[1].metric("DO₂ (mg/L)", round(do2_val, 2) if pd.notna(do2_val) else "—")
+        cols1[2].metric("BOD (mg/L)", round(bod_val, 2) if pd.notna(bod_val) else "—")
+        cols1[3].metric("COD (mg/L)", round(cod_val, 2) if pd.notna(cod_val) else "—")
 
-        cols2[0].metric("Temp (°C)", temp_val if pd.notna(temp_val) else "—")
-        cols2[1].metric("Turbidity (FNU)", turb_val if pd.notna(turb_val) else "—")
-        cols2[2].metric("Ammonia (mg/L)", ammo_val if pd.notna(ammo_val) else "—")
-        cols2[3].metric("Conductivity (μS/cm)", cond_val if pd.notna(cond_val) else "—")
+        cols2[0].metric("Temp (°C)", round(temp_val, 2) if pd.notna(temp_val) else "—")
+        cols2[1].metric("Turbidity (FNU)", round(turb_val, 2) if pd.notna(turb_val) else "—")
+        cols2[2].metric("Ammonia (mg/L)", round(ammo_val, 2) if pd.notna(ammo_val) else "—")
+        cols2[3].metric("Conductivity (μS/cm)", round(cond_val, 2) if pd.notna(cond_val) else "—")
 
         # Time series chart
         tdf = df.copy()
@@ -258,7 +293,13 @@ def dashboard():
             })
             dfm = dfm.dropna(subset=["value"])  # drop missing values
             try:
-                fig = px.line(dfm, x="timestamp", y="value", color="parameter", title=f"Sensor {sid} readings", labels={"parameter": "Parameter"})
+                fig = px.line(
+                    dfm,
+                    x="timestamp",
+                    y="value",
+                    color="parameter",
+                    labels={"parameter": "Parameters", "timestamp": "Timestamp", "value": "Value"},
+                )
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.error(f"Failed to render chart: {e}")
@@ -278,31 +319,44 @@ def dashboard():
 def alerts_page():
     st.title("Alerts")
     unresolved = st.checkbox("Show unresolved only", value=True)
-    resp = requests.get(f"{API_BASE}/alerts?unresolved_only={str(unresolved).lower()}")
-    if resp.status_code == 200:
-        rows = resp.json()
-        if rows:
-            for a in rows:
-                with st.expander(f"Alert {a['id']} - {a['severity']}"):
-                    st.write(a)
-                    if not a.get("resolved"):
-                        if st.button("Resolve", key=f"resolve-{a['id']}"):
-                            # require supabase auth token to resolve
-                            token = st.session_state.get("access_token")
-                            if not token:
-                                st.error("Sign in with Supabase to resolve alerts")
-                            else:
-                                headers = {"Authorization": f"Bearer {token}"}
-                                r = requests.post(f"{API_BASE}/alerts/{a['id']}/resolve", headers=headers)
-                                if r.status_code == 200:
-                                    st.success("Resolved")
-                                    st.experimental_rerun()
-                                else:
-                                    st.error("Failed to resolve")
-        else:
-            st.info("No alerts")
+    # Prefer Supabase directly (no backend needed)
+    rows = None
+    try:
+        from supabase_client import get_alerts
+
+        rows = get_alerts(unresolved_only=unresolved)
+    except Exception as e:
+        st.error(f"Supabase not reachable: {e}")
+        st.info("Check Streamlit secrets for SUPABASE_URL and SUPABASE_KEY.")
+        return
+
+    if rows:
+        df = pd.DataFrame(rows)
+        # Keep a consistent column order if present
+        preferred_cols = ["id", "sensor_id", "severity", "message", "timestamp", "resolved"]
+        cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
+        df = df[cols]
+        st.dataframe(df, use_container_width=True)
+
+        # Optional resolve action for unresolved alerts
+        unresolved_ids = [a["id"] for a in rows if not a.get("resolved")]
+        if unresolved_ids:
+            st.markdown("### Resolve Alert")
+            alert_id = st.selectbox("Select alert to resolve", unresolved_ids)
+            if st.button("Resolve selected alert"):
+                token = st.session_state.get("access_token")
+                if not token:
+                    st.error("Sign in with Supabase to resolve alerts")
+                else:
+                    headers = {"Authorization": f"Bearer {token}"}
+                    r = requests.post(f"{API_BASE}/alerts/{alert_id}/resolve", headers=headers)
+                    if r.status_code == 200:
+                        st.success("Resolved")
+                        st.rerun() # DO NOT CHANGE!!!
+                    else:
+                        st.error("Failed to resolve")
     else:
-        st.error("Could not fetch alerts")
+        st.info("No alerts")
 
 
 def simulation_page():
