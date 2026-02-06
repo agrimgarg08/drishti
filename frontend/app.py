@@ -1,9 +1,8 @@
-"""Streamlit frontend for the DRISHTI.
-Run: streamlit run frontend/app.py
-"""
+#Streamlit frontend for the DRISHTI.
 import os
 import sys
 import pathlib
+import base64
 import streamlit as st
 import requests
 import pandas as pd
@@ -24,14 +23,31 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 st.set_page_config(page_title="Drishti", layout="wide")
 
+def _img_to_base64(path: pathlib.Path) -> str:
+    try:
+        return base64.b64encode(path.read_bytes()).decode("utf-8")
+    except Exception:
+        return ""
+
+sidebar_image_path = pathlib.Path(__file__).resolve().parent / "sidebar_image.png"
+sidebar_image_b64 = _img_to_base64(sidebar_image_path)
+
 st.markdown(
-    """
+    f"""
     <style>
+    /* Sidebar background image */
+    section[data-testid="stSidebar"] > div:first-child {{
+        background-image: url("data:image/png;base64,{sidebar_image_b64}");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+    }}
+
     /* Target the sidebar title */
-    section[data-testid="stSidebar"] h1 {
+    section[data-testid="stSidebar"] h1 {{
         font-size: 64px !important;  /* Increase font size */
         font-weight: bold;           /* Optional: make it bold */
-    }
+    }}
     </style>
     """,
     unsafe_allow_html=True
