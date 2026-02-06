@@ -12,12 +12,38 @@ from datetime import timedelta
 
 NUMERIC_COLS = ["ph", "do2", "bod", "cod", "turbidity", "ammonia", "temperature", "conductivity"]
 
+# Normalize column names to lowercase canonical keys used in this module.
+CANONICAL_MAP = {
+    "ph": "ph",
+    "do2": "do2",
+    "bod": "bod",
+    "cod": "cod",
+    "turbidity": "turbidity",
+    "ammonia": "ammonia",
+    "temperature": "temperature",
+    "conductivity": "conductivity",
+    "timestamp": "timestamp",
+    "sensor_id": "sensor_id",
+}
+
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    rename = {}
+    for c in df.columns:
+        lc = str(c).lower()
+        if lc in CANONICAL_MAP and c != CANONICAL_MAP[lc]:
+            rename[c] = CANONICAL_MAP[lc]
+    if rename:
+        df = df.rename(columns=rename)
+    return df
+
 
 def anomaly_detection(df: pd.DataFrame, contamination: float = 0.05):
     """Mark anomalies using IsolationForest on numeric sensors.
     Returns (df_with_flag, alerts_list)
     """
-    df = df.copy()
+    df = _normalize_columns(df)
     if df.empty:
         return df, []
 
@@ -42,7 +68,7 @@ def _pollution_index(row):
     # ph is neutral around 7; penalize if outside 6.5-8
     score = 0.0
     score += max(0, abs(row.get("ph", 7) - 7)) * 1.0
-    score += max(0, (8 - row.get("DO2", 8))) * 1.5  # low DO2 is bad
+    score += max(0, (8 - row.get("do2", 8))) * 1.5  # low DO2 is bad
     score += row.get("bod", 0) * 0.2
     score += row.get("cod", 0) * 0.1
     score += row.get("turbidity", 0) * 0.05
@@ -55,7 +81,7 @@ def predict_risk(df: pd.DataFrame):
     """Predict pollution risk (pollution index) for next 24 hours hourly using linear regression.
     Returns a dict: {"next_24h": [{"ts":..., "risk": ...}, ...], "baseline": current_score}
     """
-    df = df.copy()
+    df = _normalize_columns(df)
     if df.empty:
         return {"next_24h": [], "baseline": 0}
 
@@ -65,10 +91,15 @@ def predict_risk(df: pd.DataFrame):
 
     # Aggregate hourly
     numeric_cols = [
-    "ph", "do2", "bod", "cod",
-    "turbidity", "ammonia",
-    "temperature", "conductivity",
-    "score"
+        "ph",
+        "do2",
+        "bod",
+        "cod",
+        "turbidity",
+        "ammonia",
+        "temperature",
+        "conductivity",
+        "score",
     ]
     df_hour = (
     df.set_index("timestamp")[numeric_cols]
@@ -108,7 +139,7 @@ def simulate_policy(df: pd.DataFrame, reduction_pct: float):
     Returns {"projected_baseline": float, "projected_next_24h": [...]}
     """
     factor = max(0.0, min(1.0, 1.0 - reduction_pct / 100.0))
-    df = df.copy()
+    df = _normalize_columns(df)
     if df.empty:
         return {"projected_baseline": 0, "projected_next_24h": []}
 
