@@ -5,11 +5,13 @@ import os
 import sys
 import pathlib
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 import pandas as pd
 import plotly.express as px
 import supabase
+from supabase import ClientOptions
+import numpy as np
+from sklearn.linear_model import LinearRegression
 
 # Ensure repo root is on sys.path so we can import modules from project root (like supabase_client)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -38,13 +40,28 @@ st.markdown(
 st.sidebar.title("DRISHTI", text_alignment="center")
 page = st.sidebar.selectbox("Select Page", ["Dashboard", "Alerts", "Simulation", "Issues"], label_visibility="collapsed")
 
-# Optional Supabase auth (if configured). Falls back to demo login.
+# Supabase auth (rebuilt)
 supabase = None
 if SUPABASE_URL and SUPABASE_KEY:
     try:
         from supabase import create_client
 
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        class _SessionStorage:
+            def __init__(self):
+                if "_supabase_storage" not in st.session_state:
+                    st.session_state["_supabase_storage"] = {}
+
+            def get_item(self, key: str):
+                return st.session_state["_supabase_storage"].get(key)
+
+            def set_item(self, key: str, value: str) -> None:
+                st.session_state["_supabase_storage"][key] = value
+
+            def remove_item(self, key: str) -> None:
+                st.session_state["_supabase_storage"].pop(key, None)
+
+        options = ClientOptions(storage=_SessionStorage(), flow_type="implicit")
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=options)
     except Exception:
         supabase = None
 
@@ -64,6 +81,22 @@ def _get_attr(obj, key):
     return getattr(obj, key, None)
 
 
+def _extract_user(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get("user") or obj.get("data")
+    return getattr(obj, "user", None) or getattr(obj, "data", None)
+
+
+def _extract_session(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get("session")
+    return getattr(obj, "session", None)
+
+
 def _get_user_email(user):
     if not user:
         return None
@@ -76,110 +109,28 @@ def _get_user_email(user):
     return getattr(meta, "email", None)
 
 
-def _get_query_params():
+def _set_session_from_tokens(access_token, refresh_token):
+    if not access_token or not refresh_token or not supabase:
+        return False
     try:
-        return st.query_params
+        supabase.auth.set_session(access_token, refresh_token)
+        user_res = supabase.auth.get_user()
+        user = _extract_user(user_res)
+        if user:
+            st.session_state["user"] = user
+            st.session_state["access_token"] = access_token
+            st.session_state["refresh_token"] = refresh_token
+            return True
     except Exception:
-        return st.experimental_get_query_params()
+        return False
+    return False
 
 
-def _clear_query_params():
-    try:
-        st.query_params.clear()
-    except Exception:
-        st.experimental_set_query_params()
-
-st.sidebar.markdown("### Authentication")
+st.sidebar.markdown("### Authentication (using Supabase)")
 if supabase:
-    st.sidebar.write("Supabase auth available")
-    # If OAuth returns tokens in URL hash (implicit flow), move them to query params.
-    components.html(
-        """
-        <script>
-        (function() {
-          const hash = window.location.hash;
-          if (hash && hash.includes("access_token")) {
-            const params = new URLSearchParams(hash.substring(1));
-            const url = new URL(window.location.href);
-            params.forEach((v, k) => url.searchParams.set(k, v));
-            url.hash = "";
-            window.location.replace(url.toString());
-          }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-    # Restore session if we have tokens from a prior login in this browser session
+    # Restore session if we already have tokens
     if st.session_state.get("access_token") and st.session_state.get("refresh_token"):
-        try:
-            supabase.auth.set_session(
-                st.session_state["access_token"],
-                st.session_state["refresh_token"],
-            )
-            user_res = supabase.auth.get_user()
-            user = _get_attr(user_res, "user") or _get_attr(user_res, "data")
-            if user:
-                st.session_state["user"] = user
-        except Exception:
-            pass
-    # Handle OAuth redirect (Supabase sends ?code=... on return)
-    try:
-        params = _get_query_params()
-        oauth_code = params.get("code")
-        access_token = params.get("access_token")
-        refresh_token = params.get("refresh_token")
-        if isinstance(oauth_code, list):
-            oauth_code = oauth_code[0] if oauth_code else None
-        if isinstance(access_token, list):
-            access_token = access_token[0] if access_token else None
-        if isinstance(refresh_token, list):
-            refresh_token = refresh_token[0] if refresh_token else None
-
-        # If we already have tokens in the URL (implicit flow), use them directly.
-        if access_token and refresh_token and not st.session_state["user"]:
-            try:
-                supabase.auth.set_session(access_token, refresh_token)
-                user_res = supabase.auth.get_user()
-                user = _get_attr(user_res, "user") or _get_attr(user_res, "data")
-                if user:
-                    st.session_state["user"] = user
-                    st.session_state["access_token"] = access_token
-                    st.session_state["refresh_token"] = refresh_token
-                    _clear_query_params()
-                    st.sidebar.success("Signed in")
-                    st.rerun()
-            except Exception:
-                pass
-
-        if oauth_code and not st.session_state["user"]:
-            res = supabase.auth.exchange_code_for_session(oauth_code)
-            session = _get_attr(res, "session")
-            user = _get_attr(res, "user")
-            if not user and session:
-                user = _get_attr(session, "user")
-            if session:
-                st.session_state["access_token"] = _get_attr(session, "access_token")
-                st.session_state["refresh_token"] = _get_attr(session, "refresh_token")
-                if st.session_state.get("access_token") and st.session_state.get("refresh_token"):
-                    try:
-                        supabase.auth.set_session(
-                            st.session_state["access_token"],
-                            st.session_state["refresh_token"],
-                        )
-                        if not user:
-                            user_res = supabase.auth.get_user()
-                            user = _get_attr(user_res, "user") or _get_attr(user_res, "data")
-                    except Exception:
-                        pass
-            if user:
-                st.session_state["user"] = user
-                # Clear query params to avoid re-processing
-                _clear_query_params()
-                st.sidebar.success("Signed in")
-                st.rerun()
-    except Exception:
-        pass
+        _set_session_from_tokens(st.session_state["access_token"], st.session_state["refresh_token"])
 
     if not st.session_state["user"]:
         # Email/password login
@@ -189,13 +140,15 @@ if supabase:
         if cols[0].button("Sign in"):
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": pw})
-                session = _get_attr(res, "session")
-                user = _get_attr(res, "user") or _get_attr(session, "user")
-                if session and user:
-                    st.session_state["user"] = user
+                session = _extract_session(res)
+                user = _extract_user(res) or _extract_user(session)
+                if session:
                     st.session_state["access_token"] = _get_attr(session, "access_token")
                     st.session_state["refresh_token"] = _get_attr(session, "refresh_token")
+                if user:
+                    st.session_state["user"] = user
                     st.sidebar.success("Signed in")
+                    st.rerun()
                 else:
                     st.sidebar.error("Sign in failed")
             except Exception:
@@ -207,23 +160,6 @@ if supabase:
             except Exception:
                 st.sidebar.error("Signup failed")
 
-        st.sidebar.markdown("— or —")
-        if st.sidebar.button("Sign in with GitHub"):
-            try:
-                redirect_to = os.getenv("SUPABASE_REDIRECT_URL") or "http://localhost:8501"
-                res = supabase.auth.sign_in_with_oauth(
-                    {"provider": "github", "options": {"redirect_to": redirect_to}}
-                )
-                if isinstance(res, dict):
-                    url = res.get("url")
-                else:
-                    url = getattr(res, "url", None)
-                if url:
-                    st.sidebar.link_button("Continue to GitHub", url)
-                else:
-                    st.sidebar.error("Failed to start GitHub login")
-            except Exception:
-                st.sidebar.error("Auth error")
     else:
         st.sidebar.write(f"Signed in: {_get_user_email(st.session_state['user'])}")
         if st.sidebar.button("Sign out"):
@@ -234,17 +170,9 @@ if supabase:
             st.session_state["user"] = None
             st.session_state["access_token"] = None
             st.session_state["refresh_token"] = None
+            st.rerun()
 else:
-    st.sidebar.info("Supabase not configured — demo login available")
-    if not st.session_state["user"]:
-        demo_user = st.sidebar.text_input("Demo username", key="demo_user")
-        if st.sidebar.button("Demo login"):
-            st.session_state["user"] = {"email": demo_user or "demo"}
-            st.sidebar.success("Signed in (demo)")
-    else:
-        st.sidebar.write(f"Signed in: {st.session_state['user'].get('email')}")
-        if st.sidebar.button("Sign out demo"):
-            st.session_state["user"] = None
+    st.sidebar.info("Supabase not configured. Add SUPABASE_URL and SUPABASE_KEY.")
 
 
 def fetch_sensors():
@@ -314,30 +242,51 @@ def dashboard():
     if show_only_with_alerts:
         dfmap = dfmap[dfmap["alert_count"] > 0]
 
-    # Plot using Plotly mapbox (open-street-map so no token needed)
+    # Plot using Plotly map (MapLibre; no token needed)
     if not dfmap.empty:
-        center_lat = 28.6139
-        center_lon = 77.2090
-        fig = px.scatter_mapbox(
+        # 
+        center_lat = 28.6625
+        center_lon = 77.2564
+        fig = px.scatter_map(
             dfmap,
             lat="lat",
             lon="lon",
             hover_name="name",
             hover_data={"id": True, "lat": True, "lon": True, "alert_count": True},
-            zoom=10,
+            zoom=9.7,
             height=500,
         )
         # Color markers by alert status: green (no alerts), red (alerts)
         fig.update_traces(
             marker=dict(size=10, color=dfmap["alert_color"], opacity=0.9),
             selector=dict(mode="markers"),
+            customdata=dfmap[
+                [
+                    "id",
+                    "lat",
+                    "lon",
+                    "alert_count",
+                ]
+            ],
+            hovertemplate=(
+                "<b>%{hovertext}</b><br>"
+                "ID: %{customdata[0]}<br>"
+                "Latitude: %{customdata[1]:.4f}<br>"
+                "Longitude: %{customdata[2]:.4f}<br>"
+                "Alerts: %{customdata[3]}<br>"
+                "<extra></extra>"
+            ),
         )
-        fig.update_layout(mapbox_style="open-street-map", mapbox_center={"lat": center_lat, "lon": center_lon})
+        fig.update_layout(
+            map_style="basic",
+            map_center={"lat": center_lat, "lon": center_lon},
+            margin=dict(l=0, r=0, t=0, b=0),
+        )
         # Render chart simply (no optional click-to-select to avoid instability)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch", config={"scrollZoom": False})
     else:
         st.info("No points to display on map.")
-
+    st.divider()
     # Sensor detail panel
     st.subheader("Sensor Details & Readings")
     sensor_ids = sorted([int(x) for x in dfmap["id"].tolist()])
@@ -348,7 +297,13 @@ def dashboard():
         return
     
     # Number input for selecting sensor ID
-    sid = st.number_input("Enter drain number (ID)", min_value=1, max_value=10000, value=sensor_ids[0] if sensor_ids else 1, step=1)
+    sid = st.number_input(
+        "Enter drain number (ID)",
+        min_value=min(sensor_ids),
+        max_value=max(sensor_ids),
+        value=sensor_ids[0] if sensor_ids else 1,
+        step=1,
+    )
     
     # Validate that the entered ID exists
     if sid not in sensor_ids:
@@ -450,7 +405,7 @@ def dashboard():
                     color="parameter",
                     labels={"parameter": "Parameters", "timestamp": "Timestamp", "value": "Value"},
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             except Exception as e:
                 st.error(f"Failed to render chart: {e}")
                 st.write(dfm.head())
@@ -492,7 +447,7 @@ def alerts_page():
         preferred_cols = ["id", "sensor_id", "severity", "message", "timestamp", "resolved"]
         cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
         df = df[cols]
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
 
         # Optional resolve action for unresolved alerts
         unresolved_ids = [a["id"] for a in rows if not a.get("resolved")]
@@ -537,24 +492,130 @@ def simulation_page():
     st.title("Policy Simulation")
     sid = st.number_input("Sensor ID", min_value=1, max_value=1000, value=1)
     pct = st.slider("Reduce pollutant discharges by %", min_value=0, max_value=100, value=20)
+    horizon = st.slider("Forecast horizon (hours)", min_value=24, max_value=168, value=72, step=24)
     if st.button("Simulate"):
-        resp = requests.post(f"{API_BASE}/simulate-policy", json={"sensor_id": sid, "reduction_pct": pct})
-        if resp.status_code == 200:
-            res = resp.json()
-            # prefer projected_baseline if supplied by backend, else use baseline
-            st.metric("Baseline risk", round(res.get("projected_baseline", res.get("baseline", 0)), 2))
-            next_24 = res.get("next_24h", [])
-            if next_24:
-                df = pd.DataFrame(next_24)
-                df["ts"] = pd.to_datetime(df["ts"])
-                fig = px.line(df, x="ts", y="risk", title=f"Projected risk (next 24h) after {pct}% reduction")
-                st.plotly_chart(fig, use_container_width=True)
+        try:
+            from supabase_client import get_readings_for_sensor
+        except Exception as e:
+            st.error(f"Supabase not reachable: {e}")
+            return
+
+        df_raw = get_readings_for_sensor(int(sid), limit=500)
+        if df_raw is None or df_raw.empty:
+            st.info("No readings available for this sensor.")
+            return
+
+        # Normalize columns to lowercase for modeling
+        df_raw = df_raw.copy()
+        df_raw.columns = [str(c).lower() for c in df_raw.columns]
+        if "timestamp" in df_raw.columns:
+            df_raw["timestamp"] = pd.to_datetime(df_raw["timestamp"])
         else:
-            st.error("Simulation failed")
+            st.error("Missing timestamp column for simulation.")
+            return
+
+        def _pollution_index(row):
+            """Return a 0-100 normalized risk score (higher = worse)."""
+            # Expected ranges for normalization
+            ph = row.get("ph", 7)
+            do2 = row.get("do2", 8)
+            bod = row.get("bod", 0)
+            cod = row.get("cod", 0)
+            turb = row.get("turbidity", 0)
+            ammo = row.get("ammonia", 0)
+            cond = row.get("conductivity", 0)
+
+            # Normalize 0-1 (clamp)
+            ph_dev = min(abs(ph - 7) / 3.0, 1.0)  # pH outside 4-10 treated as max risk
+            do_def = min(max(0.0, (8 - do2) / 6.0), 1.0)  # DO2 below 2 is worst
+            bod_n = min(max(bod / 20.0, 0.0), 1.0)
+            cod_n = min(max(cod / 200.0, 0.0), 1.0)
+            turb_n = min(max(turb / 100.0, 0.0), 1.0)
+            ammo_n = min(max(ammo / 10.0, 0.0), 1.0)
+            cond_n = min(max(cond / 2000.0, 0.0), 1.0)
+
+            # Weighted sum -> 0-1
+            score_0_1 = (
+                0.15 * ph_dev
+                + 0.20 * do_def
+                + 0.20 * bod_n
+                + 0.15 * cod_n
+                + 0.10 * turb_n
+                + 0.10 * ammo_n
+                + 0.10 * cond_n
+            )
+            # Scale to 0-100 and clamp
+            return float(min(max(score_0_1 * 100.0, 0.0), 100.0))
+
+        def _forecast(df_in: pd.DataFrame):
+            df_in = df_in.sort_values("timestamp")
+            df_in["score"] = df_in.apply(_pollution_index, axis=1)
+            df_hour = df_in.set_index("timestamp").resample("1h").mean().interpolate().reset_index()
+            if df_hour.shape[0] < 6:
+                last_score = float(df_in["score"].iloc[-1])
+                ts = pd.to_datetime(df_in["timestamp"].iloc[-1])
+                out = [{"ts": (ts + pd.Timedelta(hours=i)).isoformat(), "risk": last_score} for i in range(1, horizon + 1)]
+                return out, float(df_in["score"].mean()), df_hour.shape[0], True
+            df_hour["t_idx"] = np.arange(len(df_hour))
+            model = LinearRegression()
+            model.fit(df_hour[["t_idx"]], df_hour[["score"]])
+            last_idx = df_hour["t_idx"].iloc[-1]
+            out = []
+            for i in range(1, horizon + 1):
+                pred = model.predict(pd.DataFrame({"t_idx": [last_idx + i]}))[0, 0]
+                out.append(
+                    {
+                        "ts": (df_hour["timestamp"].iloc[-1] + pd.Timedelta(hours=i)).isoformat(),
+                        "risk": float(max(pred, 0)),
+                    }
+                )
+            return out, float(df_in["score"].mean()), df_hour.shape[0], False
+
+        # Baseline forecast
+        base_next, base_avg, base_points, base_flat = _forecast(df_raw.copy())
+
+        # Reduced forecast
+        df_reduced = df_raw.copy()
+        factor = max(0.0, min(1.0, 1.0 - pct / 100.0))
+        for col in ["bod", "cod", "turbidity", "ammonia", "conductivity"]:
+            if col in df_reduced.columns:
+                df_reduced[col] = df_reduced[col] * factor
+        red_next, red_avg, red_points, red_flat = _forecast(df_reduced)
+
+        if base_flat or red_flat:
+            st.info(
+                f"Only {min(base_points, red_points)} hourly points available. Showing a flat projection for the next {horizon} hours."
+            )
+
+        c1, c2 = st.columns(2)
+        c1.metric("Baseline risk (lower is better)", round(base_avg, 2))
+        c2.metric(f"Reduced risk (-{pct}%)", round(red_avg, 2))
+
+        if base_next and red_next:
+            df_base = pd.DataFrame(base_next)
+            df_base["scenario"] = "Baseline"
+            df_red = pd.DataFrame(red_next)
+            df_red["scenario"] = f"Reduced"
+            dfp = pd.concat([df_base, df_red], ignore_index=True)
+            dfp["ts"] = pd.to_datetime(dfp["ts"])
+            fig = px.line(
+                dfp,
+                x="ts",
+                y="risk",
+                color="scenario",
+                line_dash="scenario",
+                title=f"Projected risk (next {horizon}h)",
+                labels={"ts": "Timestamp", "risk": "Baseline Risk"},
+            )
+            fig.update_yaxes(range=[0, 100])
+            fig.update_traces(selector=dict(name="Baseline"), line=dict(dash="solid"))
+            fig.update_traces(selector=dict(name=f"Reduced ({pct}%)"), line=dict(dash="dash"))
+            st.plotly_chart(fig, width="stretch")
 
 
 def issues_page():
     st.title("Issues")
+    show_open_only = st.checkbox("Show open only", value=True)
     with st.form("create_issue"):
         t = st.text_input("Title")
         d = st.text_area("Description")
@@ -584,7 +645,7 @@ def issues_page():
                 except Exception as e:
                     st.error(f"Failed to create issue: {e}")
 
-    if st.button("Refresh issues"):
+    if st.sidebar.button("Refresh issues"):
         try:
             st.cache_data.clear()
         except Exception:
@@ -602,10 +663,15 @@ def issues_page():
 
     if rows:
         df = pd.DataFrame(rows)
+        if show_open_only and "status" in df.columns:
+            df = df[df["status"] == "open"]
+        if df.empty:
+            st.info("No issues")
+            return
         preferred_cols = ["id", "title", "description", "status", "created_by", "created_at"]
         cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
         df = df[cols]
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
         # allow closing an issue
         open_ids = [i["id"] for i in rows if i.get("status") != "closed"]
         if open_ids:
@@ -639,7 +705,7 @@ def issues_page():
                         except Exception:
                             pass
                         st.success("Issue closed")
-                        st.experimental_rerun()
+                        st.rerun() # DO NOT CHANGE!!!
                     except Exception as e:
                         st.error(f"Failed to close: {e}")
     else:
