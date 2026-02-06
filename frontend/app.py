@@ -36,11 +36,36 @@ st.markdown(
     f"""
     <style>
     /* Sidebar background image */
-    section[data-testid="stSidebar"] > div:first-child {{
+    section[data-testid="stSidebar"] {{
+        position: relative;
+        overflow: hidden;
+        background: transparent;
+    }}
+
+    section[data-testid="stSidebar"]::before {{
+        content: "";
+        position: absolute;
+        inset: 0;
         background-image: url("data:image/png;base64,{sidebar_image_b64}");
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
+        transform: scale(1.1);
+        transform-origin: center;
+        z-index: 0;
+        pointer-events: none;
+    }}
+
+    /* Keep sidebar content above the background layer */
+    section[data-testid="stSidebar"] > div {{
+        position: relative;
+        z-index: 1;
+    }}
+
+    section[data-testid="stSidebar"] > div:first-child {{
+        /* Ensure the background fills the full sidebar height (prevents bottom white strip) */
+        min-height: 100vh;
+        background: transparent;
     }}
 
     /* Target the sidebar title */
@@ -206,7 +231,7 @@ def dashboard():
 
     # Controls
     st.sidebar.markdown("### Map / Sensor Details")
-    show_only_with_alerts = st.sidebar.checkbox("Show data for active alerts only", value=False)
+    show_only_with_alerts = st.sidebar.checkbox("Show data for sensors with active alerts only", value=False)
     if st.sidebar.button("Refresh sensor data"):
         # clear cached supabase queries
         try:
