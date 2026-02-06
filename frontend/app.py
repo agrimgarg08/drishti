@@ -353,7 +353,8 @@ def dashboard():
 
     df = None
     try:
-        df = get_readings_for_sensor(sid)
+        # Load more than the default so the user can pan/zoom beyond 14 days.
+        df = get_readings_for_sensor(sid, limit=5000)
     except Exception as e:
         st.error(f"Error fetching readings for sensor {sid}: {e}")
         st.info("This may be a temporary issue. Try refreshing the sensor data or selecting a different sensor.")
@@ -419,14 +420,13 @@ def dashboard():
         cols2[2].metric("Ammonia (mg/L)", round(ammo_val, 2) if pd.notna(ammo_val) else "—")
         cols2[3].metric("Conductivity (μS/cm)", round(cond_val, 2) if pd.notna(cond_val) else "—")
 
-        # Time series chart (last 14 days only)
+        # Time series chart: default view = last 14 days, but keep full history for pan/zoom
         tdf = df.copy()
-        tdf = tdf.sort_values("timestamp")
-        if "timestamp" in tdf.columns and not tdf["timestamp"].isna().all():
-            latest_ts = pd.to_datetime(tdf["timestamp"]).max()
-            if pd.notna(latest_ts):
-                window_start = latest_ts - pd.Timedelta(days=14)
-                tdf = tdf[tdf["timestamp"] >= window_start]
+        tdf["timestamp"] = pd.to_datetime(tdf["timestamp"], errors="coerce")
+        tdf = tdf.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+        latest_ts = tdf["timestamp"].max() if not tdf.empty else None
+        window_start = (latest_ts - pd.Timedelta(days=14)) if pd.notna(latest_ts) else None
         # Safely plot parameters by reshaping to long format to avoid Plotly length errors
         params = ["pH", "DO2", "BOD", "COD", "turbidity", "ammonia", "temperature", "conductivity"]
         available = [p for p in params if p in tdf.columns]
@@ -451,17 +451,17 @@ def dashboard():
                     color="parameter",
                     labels={"parameter": "Parameters", "timestamp": "Timestamp", "value": "Value"},
                 )
+                if pd.notna(window_start) and pd.notna(latest_ts):
+                    # Default view: last 14 days. User can still pan/zoom to older data.
+                    fig.update_xaxes(range=[window_start, latest_ts])
                 st.plotly_chart(fig, width="stretch")
             except Exception as e:
                 st.error(f"Failed to render chart: {e}")
                 st.write(dfm.head())
 
-        st.write("Latest 10 readings")
-        if "timestamp" in tdf.columns:
-            latest10 = tdf.sort_values("timestamp", ascending=False).head(10)
-        else:
-            latest10 = tdf.tail(10)
-        st.dataframe(latest10, hide_index=True)
+        n_latest = st.slider("Rows to show", min_value=10, max_value=500, value=10, step=10)
+        latestn = tdf.sort_values("timestamp", ascending=False).head(int(n_latest))
+        st.dataframe(latestn, hide_index=True)
 
         # Link to alerts for this sensor
         a_count = int(dfmap.loc[dfmap["id"] == sid, "alert_count"].iloc[0]) if not dfmap.loc[dfmap["id"] == sid].empty else 0
