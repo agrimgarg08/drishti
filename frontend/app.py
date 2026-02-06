@@ -49,10 +49,27 @@ if SUPABASE_URL and SUPABASE_KEY:
 
 if "user" not in st.session_state:
     st.session_state["user"] = None
+if "access_token" not in st.session_state:
+    st.session_state["access_token"] = None
+if "refresh_token" not in st.session_state:
+    st.session_state["refresh_token"] = None
 
 st.sidebar.markdown("### Authentication")
 if supabase:
     st.sidebar.write("Supabase auth available")
+    # Restore session if we have tokens from a prior login in this browser session
+    if st.session_state.get("access_token") and st.session_state.get("refresh_token"):
+        try:
+            supabase.auth.set_session(
+                st.session_state["access_token"],
+                st.session_state["refresh_token"],
+            )
+            user_res = supabase.auth.get_user()
+            user = user_res.get("user") if isinstance(user_res, dict) else getattr(user_res, "user", None)
+            if user:
+                st.session_state["user"] = user
+        except Exception:
+            pass
     # Handle OAuth redirect (Supabase sends ?code=... on return)
     try:
         params = st.query_params
@@ -61,11 +78,16 @@ if supabase:
             oauth_code = oauth_code[0] if oauth_code else None
         if oauth_code and not st.session_state["user"]:
             res = supabase.auth.exchange_code_for_session(oauth_code)
-            session = res.get("session") if isinstance(res, dict) else None
-            user = res.get("user") if isinstance(res, dict) else None
+            if isinstance(res, dict):
+                session = res.get("session")
+                user = res.get("user")
+            else:
+                session = getattr(res, "session", None)
+                user = getattr(res, "user", None)
             if session and user:
                 st.session_state["user"] = user
                 st.session_state["access_token"] = session.get("access_token")
+                st.session_state["refresh_token"] = session.get("refresh_token")
                 # Clear query params to avoid re-processing
                 st.query_params.clear()
                 st.sidebar.success("Signed in")
