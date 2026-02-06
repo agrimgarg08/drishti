@@ -54,6 +54,40 @@ if "access_token" not in st.session_state:
 if "refresh_token" not in st.session_state:
     st.session_state["refresh_token"] = None
 
+
+def _get_attr(obj, key):
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _get_user_email(user):
+    if not user:
+        return None
+    email = _get_attr(user, "email")
+    if email:
+        return email
+    meta = _get_attr(user, "user_metadata")
+    if isinstance(meta, dict):
+        return meta.get("email")
+    return getattr(meta, "email", None)
+
+
+def _get_query_params():
+    try:
+        return st.query_params
+    except Exception:
+        return st.experimental_get_query_params()
+
+
+def _clear_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        st.experimental_set_query_params()
+
 st.sidebar.markdown("### Authentication")
 if supabase:
     st.sidebar.write("Supabase auth available")
@@ -65,32 +99,43 @@ if supabase:
                 st.session_state["refresh_token"],
             )
             user_res = supabase.auth.get_user()
-            user = user_res.get("user") if isinstance(user_res, dict) else getattr(user_res, "user", None)
+            user = _get_attr(user_res, "user") or _get_attr(user_res, "data")
             if user:
                 st.session_state["user"] = user
         except Exception:
             pass
     # Handle OAuth redirect (Supabase sends ?code=... on return)
     try:
-        params = st.query_params
+        params = _get_query_params()
         oauth_code = params.get("code")
         if isinstance(oauth_code, list):
             oauth_code = oauth_code[0] if oauth_code else None
         if oauth_code and not st.session_state["user"]:
             res = supabase.auth.exchange_code_for_session(oauth_code)
-            if isinstance(res, dict):
-                session = res.get("session")
-                user = res.get("user")
-            else:
-                session = getattr(res, "session", None)
-                user = getattr(res, "user", None)
-            if session and user:
+            session = _get_attr(res, "session")
+            user = _get_attr(res, "user")
+            if not user and session:
+                user = _get_attr(session, "user")
+            if session:
+                st.session_state["access_token"] = _get_attr(session, "access_token")
+                st.session_state["refresh_token"] = _get_attr(session, "refresh_token")
+                if st.session_state.get("access_token") and st.session_state.get("refresh_token"):
+                    try:
+                        supabase.auth.set_session(
+                            st.session_state["access_token"],
+                            st.session_state["refresh_token"],
+                        )
+                        if not user:
+                            user_res = supabase.auth.get_user()
+                            user = _get_attr(user_res, "user") or _get_attr(user_res, "data")
+                    except Exception:
+                        pass
+            if user:
                 st.session_state["user"] = user
-                st.session_state["access_token"] = session.get("access_token")
-                st.session_state["refresh_token"] = session.get("refresh_token")
                 # Clear query params to avoid re-processing
-                st.query_params.clear()
+                _clear_query_params()
                 st.sidebar.success("Signed in")
+                st.rerun()
     except Exception:
         pass
 
@@ -102,11 +147,12 @@ if supabase:
         if cols[0].button("Sign in"):
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": pw})
-                session = res.get("session") if isinstance(res, dict) else None
-                user = res.get("user") if isinstance(res, dict) else None
+                session = _get_attr(res, "session")
+                user = _get_attr(res, "user") or _get_attr(session, "user")
                 if session and user:
                     st.session_state["user"] = user
-                    st.session_state["access_token"] = session.get("access_token")
+                    st.session_state["access_token"] = _get_attr(session, "access_token")
+                    st.session_state["refresh_token"] = _get_attr(session, "refresh_token")
                     st.sidebar.success("Signed in")
                 else:
                     st.sidebar.error("Sign in failed")
@@ -137,13 +183,15 @@ if supabase:
             except Exception:
                 st.sidebar.error("Auth error")
     else:
-        st.sidebar.write(f"Signed in: {st.session_state['user'].get('email')}")
+        st.sidebar.write(f"Signed in: {_get_user_email(st.session_state['user'])}")
         if st.sidebar.button("Sign out"):
             try:
                 supabase.auth.sign_out()
             except Exception:
                 pass
             st.session_state["user"] = None
+            st.session_state["access_token"] = None
+            st.session_state["refresh_token"] = None
 else:
     st.sidebar.info("Supabase not configured — demo login available")
     if not st.session_state["user"]:
@@ -426,7 +474,11 @@ def alerts_page():
                     try:
                         from supabase_client import resolve_alert
 
-                        resolve_alert(int(alert_id), access_token=token)
+                        resolve_alert(
+                            int(alert_id),
+                            access_token=token,
+                            refresh_token=st.session_state.get("refresh_token"),
+                        )
                         try:
                             st.cache_data.clear()
                         except Exception:
@@ -471,11 +523,17 @@ def issues_page():
             if not token or not user:
                 st.error("Sign in with Supabase to submit issues")
             else:
-                email = user.get("email") or user.get("user_metadata", {}).get("email") or "unknown"
+                email = _get_user_email(user) or "unknown"
                 try:
                     from supabase_client import create_issue
 
-                    create_issue(t, d, created_by=email, access_token=token)
+                    create_issue(
+                        t,
+                        d,
+                        created_by=email,
+                        access_token=token,
+                        refresh_token=st.session_state.get("refresh_token"),
+                    )
                     try:
                         st.cache_data.clear()
                     except Exception:
@@ -528,7 +586,12 @@ def issues_page():
                     try:
                         from supabase_client import update_issue_status
 
-                        update_issue_status(int(issue_id), "closed", access_token=token)
+                        update_issue_status(
+                            int(issue_id),
+                            "closed",
+                            access_token=token,
+                            refresh_token=st.session_state.get("refresh_token"),
+                        )
                         try:
                             st.cache_data.clear()
                         except Exception:

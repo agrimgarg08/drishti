@@ -83,12 +83,15 @@ def get_alerts(unresolved_only: bool = True) -> List[Dict]:
     return data or []
 
 
-def resolve_alert(alert_id: int, access_token: str = None) -> Dict:
+def resolve_alert(alert_id: int, access_token: str = None, refresh_token: str = None) -> Dict:
     """Resolve an alert by setting resolved=true. Requires access_token if RLS is enabled."""
     supabase = get_supabase_client()
     if access_token:
         try:
-            supabase.auth.set_session(access_token, "")
+            if refresh_token:
+                supabase.auth.set_session(access_token, refresh_token)
+            else:
+                supabase.auth.set_session(access_token, "")
         except Exception:
             pass
     res = supabase.table("alerts").update({"resolved": True}).eq("id", alert_id).execute()
@@ -105,12 +108,15 @@ def get_issues() -> List[Dict]:
     return data or []
 
 
-def create_issue(title: str, description: str, created_by: str, access_token: str = None) -> Dict:
+def create_issue(title: str, description: str, created_by: str, access_token: str = None, refresh_token: str = None) -> Dict:
     """Create an issue row. Requires access_token if RLS is enabled."""
     supabase = get_supabase_client()
     if access_token:
         try:
-            supabase.auth.set_session(access_token, "")
+            if refresh_token:
+                supabase.auth.set_session(access_token, refresh_token)
+            else:
+                supabase.auth.set_session(access_token, "")
         except Exception:
             pass
     payload = {"title": title, "description": description, "created_by": created_by}
@@ -119,12 +125,15 @@ def create_issue(title: str, description: str, created_by: str, access_token: st
     return data[0] if data else {}
 
 
-def update_issue_status(issue_id: int, status: str, access_token: str = None) -> Dict:
+def update_issue_status(issue_id: int, status: str, access_token: str = None, refresh_token: str = None) -> Dict:
     """Update issue status. Requires access_token if RLS is enabled."""
     supabase = get_supabase_client()
     if access_token:
         try:
-            supabase.auth.set_session(access_token, "")
+            if refresh_token:
+                supabase.auth.set_session(access_token, refresh_token)
+            else:
+                supabase.auth.set_session(access_token, "")
         except Exception:
             pass
     res = supabase.table("issues").update({"status": status}).eq("id", issue_id).execute()
