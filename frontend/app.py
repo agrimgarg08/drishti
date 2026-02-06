@@ -189,8 +189,8 @@ def dashboard():
     st.title("Dashboard")
 
     # Controls
-    st.sidebar.markdown("### Map / Sensors")
-    show_only_with_alerts = st.sidebar.checkbox("Show sensors with active alerts only", value=False)
+    st.sidebar.markdown("### Map / Sensor Details")
+    show_only_with_alerts = st.sidebar.checkbox("Show data for active alerts only", value=False)
     if st.sidebar.button("Refresh sensor data"):
         # clear cached supabase queries
         try:
@@ -298,7 +298,7 @@ def dashboard():
     
     # Number input for selecting sensor ID
     sid = st.number_input(
-        "Enter drain number (ID)",
+        "Enter Sensor ID",
         min_value=min(sensor_ids),
         max_value=max(sensor_ids),
         value=sensor_ids[0] if sensor_ids else 1,
@@ -378,9 +378,14 @@ def dashboard():
         cols2[2].metric("Ammonia (mg/L)", round(ammo_val, 2) if pd.notna(ammo_val) else "—")
         cols2[3].metric("Conductivity (μS/cm)", round(cond_val, 2) if pd.notna(cond_val) else "—")
 
-        # Time series chart
+        # Time series chart (last 14 days only)
         tdf = df.copy()
         tdf = tdf.sort_values("timestamp")
+        if "timestamp" in tdf.columns and not tdf["timestamp"].isna().all():
+            latest_ts = pd.to_datetime(tdf["timestamp"]).max()
+            if pd.notna(latest_ts):
+                window_start = latest_ts - pd.Timedelta(days=14)
+                tdf = tdf[tdf["timestamp"] >= window_start]
         # Safely plot parameters by reshaping to long format to avoid Plotly length errors
         params = ["pH", "DO2", "BOD", "COD", "turbidity", "ammonia", "temperature", "conductivity"]
         available = [p for p in params if p in tdf.columns]
@@ -411,18 +416,23 @@ def dashboard():
                 st.write(dfm.head())
 
         st.write("Latest 10 readings")
-        st.dataframe(tdf.tail(10))
+        if "timestamp" in tdf.columns:
+            latest10 = tdf.sort_values("timestamp", ascending=False).head(10)
+        else:
+            latest10 = tdf.tail(10)
+        st.dataframe(latest10)
 
         # Link to alerts for this sensor
         a_count = int(dfmap.loc[dfmap["id"] == sid, "alert_count"].iloc[0]) if not dfmap.loc[dfmap["id"] == sid].empty else 0
         if a_count:
-            st.warning(f"There are {a_count} unresolved alert(s) for this sensor. See the Alerts page.")
+            st.warning(f"There is/are {a_count} unresolved alert(s) for this sensor. See the alerts page.")
         else:
-            st.success("No active alerts for this sensor")
+            st.success("No active alerts for this sensor.")
 
 
 def alerts_page():
     st.title("Alerts")
+    st.subheader("Existing Alerts")
     unresolved = st.checkbox("Show unresolved only", value=True)
     if st.sidebar.button("Refresh alerts"):
         try:
@@ -452,9 +462,9 @@ def alerts_page():
         # Optional resolve action for unresolved alerts
         unresolved_ids = [a["id"] for a in rows if not a.get("resolved")]
         if unresolved_ids:
-            st.markdown("### Resolve Alert")
+            st.subheader("Resolve an Alert")
             alert_id = st.number_input(
-                "Enter alert ID",
+                "Enter Alert ID",
                 min_value=int(min(unresolved_ids)),
                 max_value=int(max(unresolved_ids)),
                 value=int(unresolved_ids[0]),
@@ -463,7 +473,7 @@ def alerts_page():
             if alert_id not in unresolved_ids:
                 st.error(f"Invalid alert ID: {int(alert_id)}")
                 return
-            if st.button("Resolve alert"):
+            if st.button("Resolve Alert"):
                 token = st.session_state.get("access_token")
                 if not token:
                     st.error("Sign in with Supabase to resolve alerts")
@@ -489,8 +499,25 @@ def alerts_page():
 
 
 def simulation_page():
-    st.title("Policy Simulation")
-    sid = st.number_input("Sensor ID", min_value=1, max_value=1000, value=1)
+    st.title("Simulation")
+    try:
+        from supabase_client import get_sensors
+
+        sensors = get_sensors()
+        sensor_ids = sorted([int(s.get("id")) for s in sensors if s.get("id") is not None])
+    except Exception:
+        sensor_ids = []
+
+    if sensor_ids:
+        sid = st.number_input(
+            "Enter Sensor ID",
+            min_value=min(sensor_ids),
+            max_value=max(sensor_ids),
+            value=sensor_ids[0],
+            step=1,
+        )
+    else:
+        sid = st.number_input("Enter Sensor ID", min_value=1, max_value=1000, value=1)
     pct = st.slider("Reduce pollutant discharges by %", min_value=0, max_value=100, value=20)
     horizon = st.slider("Forecast horizon (hours)", min_value=24, max_value=168, value=72, step=24)
     if st.button("Simulate"):
@@ -586,16 +613,17 @@ def simulation_page():
             st.info(
                 f"Only {min(base_points, red_points)} hourly points available. Showing a flat projection for the next {horizon} hours."
             )
-
+        
+        st.divider()
         c1, c2 = st.columns(2)
-        c1.metric("Baseline risk (lower is better)", round(base_avg, 2))
-        c2.metric(f"Reduced risk (-{pct}%)", round(red_avg, 2))
+        c1.metric("Baseline Risk", round(base_avg, 2))
+        c2.metric("Reduced Risk", round(red_avg, 2))
 
         if base_next and red_next:
             df_base = pd.DataFrame(base_next)
             df_base["scenario"] = "Baseline"
             df_red = pd.DataFrame(red_next)
-            df_red["scenario"] = f"Reduced"
+            df_red["scenario"] = "Reduced"
             dfp = pd.concat([df_base, df_red], ignore_index=True)
             dfp["ts"] = pd.to_datetime(dfp["ts"])
             fig = px.line(
@@ -604,7 +632,7 @@ def simulation_page():
                 y="risk",
                 color="scenario",
                 line_dash="scenario",
-                title=f"Projected risk (next {horizon}h)",
+                title=f"Projected Risk (next {horizon}h)",
                 labels={"ts": "Timestamp", "risk": "Baseline Risk"},
             )
             fig.update_yaxes(range=[0, 100])
@@ -615,7 +643,7 @@ def simulation_page():
 
 def issues_page():
     st.title("Issues")
-    show_open_only = st.checkbox("Show open only", value=True)
+    st.subheader("Create an Issue")
     with st.form("create_issue"):
         t = st.text_input("Title")
         d = st.text_area("Description")
@@ -644,6 +672,11 @@ def issues_page():
                     st.success("Issue created")
                 except Exception as e:
                     st.error(f"Failed to create issue: {e}")
+
+    st.divider()
+
+    st.subheader("Existing Issues")
+    show_open_only = st.checkbox("Show open only", value=True)
 
     if st.sidebar.button("Refresh issues"):
         try:
@@ -675,18 +708,19 @@ def issues_page():
         # allow closing an issue
         open_ids = [i["id"] for i in rows if i.get("status") != "closed"]
         if open_ids:
-            st.markdown("### Close Issue")
+            st.divider()
+            st.subheader("Close Issue")
             issue_id = st.number_input(
-                "Enter issue ID",
+                "Enter Issue ID",
                 min_value=int(min(open_ids)),
                 max_value=int(max(open_ids)),
                 value=int(open_ids[0]),
                 step=1,
             )
             if issue_id not in open_ids:
-                st.error(f"Invalid issue ID: {int(issue_id)}")
+                st.error(f"Invalid Issue ID: {int(issue_id)}")
                 return
-            if st.button("Close issue"):
+            if st.button("Close Issue"):
                 token = st.session_state.get("access_token")
                 if not token:
                     st.error("Sign in with Supabase to close issues")
