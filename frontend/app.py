@@ -494,6 +494,8 @@ def alerts_page():
 
     if rows:
         df = pd.DataFrame(rows)
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
         # Keep a consistent column order if present
         preferred_cols = ["id", "sensor_id", "severity", "message", "timestamp", "resolved"]
         cols = [c for c in preferred_cols if c in df.columns] + [c for c in df.columns if c not in preferred_cols]
@@ -737,6 +739,8 @@ def issues_page():
 
     if rows:
         df = pd.DataFrame(rows)
+        if "created_at" in df.columns:
+            df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
         if show_open_only and "status" in df.columns:
             df = df[df["status"] == "open"]
         if df.empty:
