@@ -1,3 +1,11 @@
+## How to Access the Website
+
+This project is deployed as a website and can be accessed here:
+
+https://drishti-teamrocket.streamlit.app/
+
+Open the link in any web browser to use the program.
+
 # DRISHTI  
 ## AI-Driven Sustainability Operating System for Urban Water Systems (particularly the Yamuna)
 
