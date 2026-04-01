@@ -1,13 +1,14 @@
-## How to Access the Website
+<p align="center">
+  <a href="https://drishti-teamrocket.streamlit.app/">
+    <img 
+      src="frontend/drishti_banner.png" 
+      alt="Banner"
+      style="max-height: 300px; max-width: 100%; height: auto; width: auto;"
+    >
+  </a>
+</p>
 
-This project is deployed as a website and can be accessed here:
-
-https://drishti-teamrocket.streamlit.app/
-
-Open the link in any web browser to use the program.
-
-# DRISHTI  
-## AI-Driven Sustainability Operating System for Urban Water Systems (particularly the Yamuna)
+<h1 align="center">DRISHTI</h1>
 
 Delhi contributes a majority of the Yamuna’s pollution despite covering only a small stretch of the river.  
 Current interventions are reactive, fragmented, and lack continuous monitoring.
