@@ -36,6 +36,37 @@ Instead of reacting late, the platform supports a clearer loop:
 
 ---
 
+## What DRISHTI Does
+
+<table>
+  <tr>
+    <td valign="top" width="50%">
+      <h3>Live Monitoring</h3>
+      <p>Tracks water-quality parameters such as pH, DO, BOD, COD, turbidity, ammonia, temperature, and conductivity through a unified dashboard.</p>
+      <br>
+    </td>
+    <td valign="top" width="50%">
+      <h3>Anomaly Detection</h3>
+      <p>Uses an <strong>Isolation Forest</strong> model to flag abnormal sensor patterns and generate alerts for potential pollution events.</p>
+      <br>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top" width="50%">
+      <h3>Risk Simulation</h3>
+      <p>Projects short-term pollution risk and compares baseline conditions against discharge-reduction scenarios.</p>
+      <br>
+    </td>
+    <td valign="top" width="50%">
+      <h3>Operational Workflow</h3>
+      <p>Lets teams review alerts, create issues, and track follow-up actions from the same interface.</p>
+      <br>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Why This Matters
 
 River pollution is not just a data problem. It is a coordination problem.
