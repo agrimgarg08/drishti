@@ -12,7 +12,7 @@
 
 # DRISHTI
 
-### Real-time river pollution monitoring, anomaly detection, and response support for the Yamuna
+### Real-time river pollution monitoring, anomaly detection, and response support application
 
 <p>
   <a href="https://drishti-teamrocket.streamlit.app/"><strong>Live App</strong></a>
@@ -40,24 +40,24 @@ Instead of reacting late, the platform supports a clearer loop:
 
 <table>
   <tr>
-    <td valign="top" width="50%">
+    <td valign="top" align="center" width="50%">
       <h3>Live Monitoring</h3>
       <p>Tracks water-quality parameters such as pH, DO, BOD, COD, turbidity, ammonia, temperature, and conductivity through a unified dashboard.</p>
       <br>
     </td>
-    <td valign="top" width="50%">
+    <td valign="top" align="center" width="50%">
       <h3>Anomaly Detection</h3>
-      <p>Uses an <strong>Isolation Forest</strong> model to flag abnormal sensor patterns and generate alerts for potential pollution events.</p>
+      <p>Uses an Isolation Forest model to flag abnormal sensor patterns and generate alerts for potential pollution events.</p>
       <br>
     </td>
   </tr>
   <tr>
-    <td valign="top" width="50%">
+    <td valign="top" align="center" width="50%">
       <h3>Risk Simulation</h3>
       <p>Projects short-term pollution risk and compares baseline conditions against discharge-reduction scenarios.</p>
       <br>
     </td>
-    <td valign="top" width="50%">
+    <td valign="top" align="center" width="50%">
       <h3>Operational Workflow</h3>
       <p>Lets teams review alerts, create issues, and track follow-up actions from the same interface.</p>
       <br>
@@ -132,11 +132,10 @@ Alerts, Issues, and Action
 | Layer | Stack |
 | --- | --- |
 | Frontend | Streamlit, Plotly, Pandas |
-| PostgreSQL & Auth | Supabase (PostgreSQL + Auth) |
+| PostgreSQL & Auth | Supabase |
 | Backend (REST APIs) | FastAPI, SQLAlchemy, Uvicorn |
 | ML Model | Scikit-learn `IsolationForest`, Linear Regression |
 | Programming Language | Python |
-| Version Control & Hosting | Git, GitHub, Streamlit Community Cloud |
 
 ### Stack Breakdown
 
@@ -159,10 +158,6 @@ Alerts, Issues, and Action
 
 **Programming Language**
 - Python is used across the frontend, backend, data processing, and ML layers
-
-**Version Control & Hosting**
-- Git and GitHub support collaboration and version tracking
-- The app is designed for simple cloud deployment, with the current frontend hosted on Streamlit
 
 ---
 
@@ -196,5 +191,6 @@ DRISHTI is not just a dashboard. It is a prototype for how environmental monitor
 
 ---
 
+## Note
 
-
+The backend isn't implemented properly yet. We have bypassed it via the frontend. We plan to properly implement it in the future.
