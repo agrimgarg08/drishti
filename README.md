@@ -49,33 +49,6 @@ DRISHTI is designed around a few practical gaps:
 
 ---
 
-## What DRISHTI Does
-
-<table>
-  <tr>
-    <td valign="top" width="50%">
-      <h3>Live Monitoring</h3>
-      <p>Tracks water-quality parameters such as pH, DO, BOD, COD, turbidity, ammonia, temperature, and conductivity through a unified dashboard.</p>
-    </td>
-    <td valign="top" width="50%">
-      <h3>Anomaly Detection</h3>
-      <p>Uses an <strong>Isolation Forest</strong> model to flag abnormal sensor patterns and generate alerts for potential pollution events.</p>
-    </td>
-  </tr>
-  <tr>
-    <td valign="top" width="50%">
-      <h3>Risk Simulation</h3>
-      <p>Projects short-term pollution risk and compares baseline conditions against discharge-reduction scenarios.</p>
-    </td>
-    <td valign="top" width="50%">
-      <h3>Operational Workflow</h3>
-      <p>Lets teams review alerts, create issues, and track follow-up actions from the same interface.</p>
-    </td>
-  </tr>
-</table>
-
----
-
 ## Core Features
 
 ### Dashboard
@@ -192,6 +165,5 @@ DRISHTI is not just a dashboard. It is a prototype for how environmental monitor
 
 ---
 
-## License
 
-This project is released under the [GNU GPL v3 License](LICENSE).
+
